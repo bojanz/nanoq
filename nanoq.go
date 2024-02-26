@@ -10,7 +10,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -113,44 +112,6 @@ func NewQueue(db *sqlx.DB) *Queue {
 	return &Queue{db: db}
 }
 
-// RunTransaction runs the given function in a transaction.
-//
-// The transaction will be rolled back if the function returns an error.
-// Otherwise, it will be committed.
-func (q *Queue) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error {
-	tx, err := q.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-
-	if err := fn(tx); err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
-	}
-
-	return nil
-}
-
-// ClaimTask claims a task for processing.
-//
-// The claim is valid until the transaction is committed or rolled back.
-func (q *Queue) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
-	t := Task{}
-	err := tx.GetContext(ctx, &t, `SELECT * FROM tasks WHERE scheduled_at <= UTC_TIMESTAMP() ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return t, ErrNoTasks
-		}
-		return t, err
-	}
-
-	return t, nil
-}
-
 // CreateTask creates the given task.
 //
 // Returns ErrDuplicateTask if a task with the same fingerprint already exists.
@@ -168,6 +129,27 @@ func (q *Queue) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	}
 
 	return nil
+}
+
+// ClaimTask claims a task for processing.
+//
+// The claim is valid until the accompanying transaction is committed or rolled back.
+func (q *Queue) ClaimTask(ctx context.Context) (Task, *sqlx.Tx, error) {
+	tx, err := q.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return Task{}, nil, fmt.Errorf("begin tx: %w", err)
+	}
+
+	t := Task{}
+	err = tx.GetContext(ctx, &t, `SELECT * FROM tasks WHERE scheduled_at <= UTC_TIMESTAMP() ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return t, nil, ErrNoTasks
+		}
+		return t, nil, err
+	}
+
+	return t, tx, nil
 }
 
 // UpdateTask updates the given task.
@@ -226,7 +208,8 @@ type Processor struct {
 	handlers     map[string]Handler
 	middleware   []Middleware
 
-	done atomic.Bool
+	workers chan struct{}
+	done    atomic.Bool
 }
 
 // NewProcessor creates a new processor.
@@ -282,74 +265,78 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 	}()
 
 	p.logger.Info().Int("concurrency", concurrency).Msg("Starting processor")
-	var wg sync.WaitGroup
-	for _ = range concurrency {
-		wg.Add(1)
-
-		go func() {
-			for !p.done.Load() {
-				err := p.process(processorCtx)
-				if err != nil {
-					if errors.Is(err, ErrNoTasks) {
-						// The queue is empty. Wait a second before trying again.
-						time.Sleep(1 * time.Second)
-						continue
-					}
-					p.logger.Error().Err(err).Msg("Could not process task")
-				}
+	p.workers = make(chan struct{}, concurrency)
+	for !p.done.Load() {
+		t, tx, err := p.queue.ClaimTask(processorCtx)
+		if err != nil {
+			if !errors.Is(err, ErrNoTasks) && !errors.Is(err, context.Canceled) {
+				p.logger.Error().Err(err).Msg("Could not claim task")
 			}
-			wg.Done()
-		}()
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		p.workers <- struct{}{}
+		go func(tx *sqlx.Tx) {
+			defer func() {
+				<-p.workers
+			}()
+
+			if err = p.processTask(processorCtx, tx, t); err != nil {
+				tx.Rollback()
+				p.logger.Error().Err(err).Msg("Could not process task")
+				return
+			}
+			if err = tx.Commit(); err != nil {
+				p.logger.Error().Err(err).Msg("Could not commit transaction")
+			}
+		}(tx)
 	}
 
-	wg.Wait()
+	// Wait for workers to finish.
+	for _ = range cap(p.workers) {
+		p.workers <- struct{}{}
+	}
 }
 
-// process claims a single task and processes it.
-func (p *Processor) process(ctx context.Context) error {
-	return p.queue.RunTransaction(ctx, func(tx *sqlx.Tx) error {
-		t, err := p.queue.ClaimTask(ctx, tx)
-		if err != nil {
-			return fmt.Errorf("claim task: %w", err)
+// processTask processes a single task.
+func (p *Processor) processTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+	h, ok := p.handlers[t.Type]
+	if !ok {
+		h = func(ctx context.Context, t Task) error {
+			return fmt.Errorf("no handler not found for task type %v", t.Type)
+		}
+	}
+	// Apply global middleware.
+	for _, m := range p.middleware {
+		h = m(h)
+	}
+
+	if err := h(ctx, t); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return fmt.Errorf("task %v canceled: %v", t.ID, context.Cause(ctx))
 		}
 
-		h, ok := p.handlers[t.Type]
-		if !ok {
-			h = func(ctx context.Context, t Task) error {
-				return fmt.Errorf("no handler not found for task type %v", t.Type)
-			}
+		if p.errorHandler != nil {
+			p.errorHandler(ctx, t, err)
 		}
-		// Apply global middleware.
-		for _, m := range p.middleware {
-			h = m(h)
-		}
+		if t.Retries < t.MaxRetries && !errors.Is(err, ErrSkipRetry) {
+			t.Retries = t.Retries + 1
+			t.ScheduledAt = getNextRetryTime(int(t.Retries))
 
-		if err = h(ctx, t); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return fmt.Errorf("task %v canceled: %v", t.ID, context.Cause(ctx))
+			if err := p.queue.UpdateTask(ctx, tx, t); err != nil {
+				return fmt.Errorf("update task %v: %w", t.ID, err)
 			}
-
-			if p.errorHandler != nil {
-				p.errorHandler(ctx, t, err)
-			}
-			if t.Retries < t.MaxRetries && !errors.Is(err, ErrSkipRetry) {
-				t.Retries = t.Retries + 1
-				t.ScheduledAt = getNextRetryTime(int(t.Retries))
-
-				if err := p.queue.UpdateTask(ctx, tx, t); err != nil {
-					return fmt.Errorf("update task %v: %w", t.ID, err)
-				}
-			}
-
-			return nil
-		}
-
-		if err := p.queue.DeleteTask(ctx, tx, t); err != nil {
-			return fmt.Errorf("delete task %v: %w", t.ID, err)
 		}
 
 		return nil
-	})
+	}
+
+	if err := p.queue.DeleteTask(ctx, tx, t); err != nil {
+		return fmt.Errorf("delete task %v: %w", t.ID, err)
+	}
+
+	return nil
 }
 
 // getNextRetryTime returns the time of the next retry.
