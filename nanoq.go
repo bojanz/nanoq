@@ -23,7 +23,7 @@ import (
 
 var (
 	// ErrDuplicateTask indicates that an identical task already exists in the queue.
-	// Tasks are considered identical if they have the same type and payload.
+	// Tasks are considered identical if they have the same fingerprint.
 	ErrDuplicateTask = errors.New("duplicate task")
 
 	// ErrNoTasks indicates that no tasks are available for processing.
@@ -54,7 +54,6 @@ func NewTask(taskType string, payload []byte, opts ...TaskOption) Task {
 	now := time.Now().UTC()
 	t := Task{
 		ID:          ulid.Make().String(),
-		Fingerprint: getFingerprint(append(payload, taskType...)),
 		Type:        taskType,
 		Payload:     payload,
 		MaxRetries:  10,
@@ -64,21 +63,24 @@ func NewTask(taskType string, payload []byte, opts ...TaskOption) Task {
 	for _, opt := range opts {
 		opt(&t)
 	}
+	if t.Fingerprint == "" {
+		t.Fingerprint = getFingerprint(t.Type, t.Payload)
+	}
 
 	return t
 }
 
-// getFingerprint returns the fingerprint for the given data.
-// The fingerprint is a hash, base16 encoded and 8 characters long.
-func getFingerprint(data []byte) string {
-	crc32q := crc32.MakeTable(crc32.Castagnoli)
-	fingerprint := crc32.Checksum(data, crc32q)
-
-	return fmt.Sprintf("%x", fingerprint)
-}
-
 // TaskOption represents a task option.
 type TaskOption func(t *Task)
+
+// WithFingerprintData provides the data used to fingerprint the task.
+//
+// By default, the entire task payload is used.
+func WithFingerprintData(data []byte) TaskOption {
+	return func(t *Task) {
+		t.Fingerprint = getFingerprint(t.Type, data)
+	}
+}
 
 // WithMaxRetries allows the task to be retried the given number of times.
 //
@@ -101,6 +103,15 @@ func WithScheduledIn(scheduledIn time.Duration) TaskOption {
 	return func(t *Task) {
 		t.ScheduledAt = time.Now().UTC().Add(scheduledIn)
 	}
+}
+
+// getFingerprint returns the fingerprint for the given data.
+// The fingerprint is a hash, base16 encoded and 8 characters long.
+func getFingerprint(taskType string, data []byte) string {
+	crc32q := crc32.MakeTable(crc32.Castagnoli)
+	fingerprint := crc32.Checksum(append(data, taskType...), crc32q)
+
+	return fmt.Sprintf("%x", fingerprint)
 }
 
 // Client represents a database-backed queue client.
