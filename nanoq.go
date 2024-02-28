@@ -46,7 +46,7 @@ type Task struct {
 }
 
 // NewTask creates a new task.
-func NewTask(taskType string, payload []byte, opts ...taskOption) Task {
+func NewTask(taskType string, payload []byte, opts ...TaskOption) Task {
 	if len(payload) == 0 {
 		// Empty payloads must be valid JSON.
 		payload = []byte("{}")
@@ -77,27 +77,27 @@ func getFingerprint(data []byte) string {
 	return fmt.Sprintf("%x", fingerprint)
 }
 
-// taskOption represents a task option.
-type taskOption func(t *Task)
+// TaskOption represents a task option.
+type TaskOption func(t *Task)
 
 // WithMaxRetries allows the task to be retried the given number of times.
 //
 // Defaults to 10. Use 0 to disallow retries.
-func WithMaxRetries(maxRetries uint8) taskOption {
+func WithMaxRetries(maxRetries uint8) TaskOption {
 	return func(t *Task) {
 		t.MaxRetries = maxRetries
 	}
 }
 
 // WithScheduledAt schedules the task at the given time.
-func WithScheduledAt(scheduledAt time.Time) taskOption {
+func WithScheduledAt(scheduledAt time.Time) TaskOption {
 	return func(t *Task) {
 		t.ScheduledAt = scheduledAt
 	}
 }
 
 // WithScheduledIn schedules the task after the given duration.
-func WithScheduledIn(scheduledIn time.Duration) taskOption {
+func WithScheduledIn(scheduledIn time.Duration) TaskOption {
 	return func(t *Task) {
 		t.ScheduledAt = time.Now().UTC().Add(scheduledIn)
 	}
