@@ -294,7 +294,7 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 
 	p.logger.Info().Int("concurrency", concurrency).Msg("Starting processor")
 	var wg sync.WaitGroup
-	for _ = range concurrency {
+	for range concurrency {
 		wg.Add(1)
 
 		go func() {
