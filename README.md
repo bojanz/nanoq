@@ -51,15 +51,15 @@ func RecalculateStock(logger zerolog.Logger) nanoq.Handler {
 Create a task (usually in an HTTP handler):
 ```go
 // Usually provided to the HTTP handler.
-queue := nanoq.NewQueue(db)
+queueClient := nanoq.Client(db)
 
 payload, _ := json.Marshal(recalculateStockPayload{
 	ProductID: "my-product",
 })
 t := nanoq.NewTask("recalculate-stock", payload, nanoq.WithScheduledIn(5 * time.Minute))
 
-// The transaction (tx) usually already exists. Otherwise, queue.RunTransaction() can be used to start one.
-if err := queue.CreateTask(ctx, tx, t); err != nanoq.ErrDuplicateTask {
+// The transaction (tx) usually already exists. Otherwise, queueClient.RunTransaction() can be used to start one.
+if err := queueClient.CreateTask(ctx, tx, t); err != nanoq.ErrDuplicateTask {
 	// Handle error.
 }
 ```
@@ -67,8 +67,7 @@ if err := queue.CreateTask(ctx, tx, t); err != nanoq.ErrDuplicateTask {
 Finally, initialize the processor:
 ```go
 // logger is assumed to be a zerolog instance.
-queue := nanoq.NewQueue(db)
-processor := nanoq.NewProcessor(queue, logger)
+processor := nanoq.NewProcessor(nanoq.NewClient(db), logger)
 
 processor.OnError(func(ctx context.Context, t nanoq.Task, err error) {
 	// Log each failed task. 

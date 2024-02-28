@@ -103,21 +103,21 @@ func WithScheduledIn(scheduledIn time.Duration) TaskOption {
 	}
 }
 
-// Queue represents a database-backed queue.
-type Queue struct {
+// Client represents a database-backed queue client.
+type Client struct {
 	db *sqlx.DB
 }
 
-// NewQueue creates a new queue.
-func NewQueue(db *sqlx.DB) *Queue {
-	return &Queue{db: db}
+// NewClient creates a new client.
+func NewClient(db *sqlx.DB) *Client {
+	return &Client{db: db}
 }
 
 // RunTransaction runs the given function in a transaction.
 //
 // The transaction will be rolled back if the function returns an error.
 // Otherwise, it will be committed.
-func (q *Queue) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error {
+func (q *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error {
 	tx, err := q.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -138,7 +138,7 @@ func (q *Queue) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) 
 // ClaimTask claims a task for processing.
 //
 // The claim is valid until the transaction is committed or rolled back.
-func (q *Queue) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
+func (q *Client) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
 	t := Task{}
 	err := tx.GetContext(ctx, &t, `SELECT * FROM tasks WHERE scheduled_at <= UTC_TIMESTAMP() ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)
 	if err != nil {
@@ -154,7 +154,7 @@ func (q *Queue) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
 // CreateTask creates the given task.
 //
 // Returns ErrDuplicateTask if a task with the same fingerprint already exists.
-func (q *Queue) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+func (q *Client) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `
 		INSERT INTO tasks
 			(id, fingerprint, type, payload, retries, max_retries, created_at, scheduled_at)
@@ -171,7 +171,7 @@ func (q *Queue) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 }
 
 // UpdateTask updates the given task.
-func (q *Queue) UpdateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+func (q *Client) UpdateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `UPDATE tasks SET retries = :retries, scheduled_at = :scheduled_at WHERE id = :id`, t)
 	if err != nil {
 		return err
@@ -181,7 +181,7 @@ func (q *Queue) UpdateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 }
 
 // DeleteTask deletes the given task.
-func (q *Queue) DeleteTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+func (q *Client) DeleteTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `DELETE FROM tasks WHERE id = :id`, t)
 	if err != nil {
 		return err
@@ -219,7 +219,7 @@ type (
 
 // Processor represents the queue processor.
 type Processor struct {
-	queue  *Queue
+	client *Client
 	logger zerolog.Logger
 
 	errorHandler ErrorHandler
@@ -230,9 +230,9 @@ type Processor struct {
 }
 
 // NewProcessor creates a new processor.
-func NewProcessor(queue *Queue, logger zerolog.Logger) *Processor {
+func NewProcessor(client *Client, logger zerolog.Logger) *Processor {
 	return &Processor{
-		queue:      queue,
+		client:     client,
 		logger:     logger,
 		handlers:   make(map[string]Handler),
 		middleware: make([]Middleware, 0),
@@ -307,8 +307,8 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 
 // process claims a single task and processes it.
 func (p *Processor) process(ctx context.Context) error {
-	return p.queue.RunTransaction(ctx, func(tx *sqlx.Tx) error {
-		t, err := p.queue.ClaimTask(ctx, tx)
+	return p.client.RunTransaction(ctx, func(tx *sqlx.Tx) error {
+		t, err := p.client.ClaimTask(ctx, tx)
 		if err != nil {
 			return fmt.Errorf("claim task: %w", err)
 		}
@@ -336,7 +336,7 @@ func (p *Processor) process(ctx context.Context) error {
 				t.Retries = t.Retries + 1
 				t.ScheduledAt = getNextRetryTime(int(t.Retries))
 
-				if err := p.queue.UpdateTask(ctx, tx, t); err != nil {
+				if err := p.client.UpdateTask(ctx, tx, t); err != nil {
 					return fmt.Errorf("update task %v: %w", t.ID, err)
 				}
 			}
@@ -344,7 +344,7 @@ func (p *Processor) process(ctx context.Context) error {
 			return nil
 		}
 
-		if err := p.queue.DeleteTask(ctx, tx, t); err != nil {
+		if err := p.client.DeleteTask(ctx, tx, t); err != nil {
 			return fmt.Errorf("delete task %v: %w", t.ID, err)
 		}
 
