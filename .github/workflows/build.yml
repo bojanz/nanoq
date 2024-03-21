@@ -32,3 +32,28 @@ jobs:
         run: |
           go vet ./...
           staticcheck ./...
+
+  test:
+    strategy:
+      matrix:
+        go: ['1.22']
+    name: test @ Go ${{ matrix.go }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: ${{ matrix.go }}
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-build-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-build-
+
+    - name: Test
+      run: go test -v -race ./...
