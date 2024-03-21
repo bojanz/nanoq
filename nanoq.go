@@ -350,9 +350,9 @@ func (p *Processor) process(ctx context.Context) error {
 				if err := p.client.UpdateTask(ctx, tx, t); err != nil {
 					return fmt.Errorf("update task %v: %w", t.ID, err)
 				}
-			}
 
-			return nil
+				return nil
+			}
 		}
 
 		if err := p.client.DeleteTask(ctx, tx, t); err != nil {
