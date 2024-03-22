@@ -263,8 +263,8 @@ func (p *Processor) Use(m Middleware) {
 // Handle registers the handler for a task type.
 func (p *Processor) Handle(taskType string, h Handler, ms ...Middleware) {
 	// Wrap the handler with the passed middleware.
-	for _, m := range ms {
-		h = m(h)
+	for i := len(ms) - 1; i >= 0; i-- {
+		h = ms[i](h)
 	}
 	p.handlers[taskType] = h
 }
@@ -331,8 +331,8 @@ func (p *Processor) process(ctx context.Context) error {
 			}
 		}
 		// Apply global middleware.
-		for _, m := range p.middleware {
-			h = m(h)
+		for i := len(p.middleware) - 1; i >= 0; i-- {
+			h = p.middleware[i](h)
 		}
 
 		if err = h(ctx, t); err != nil {
