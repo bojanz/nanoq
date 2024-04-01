@@ -12,7 +12,6 @@ CREATE TABLE `tasks` (
   `scheduled_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   UNIQUE KEY `fingerprint` (`fingerprint`),
-  KEY `created_at` (`created_at`),
   KEY `scheduled_at` (`scheduled_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

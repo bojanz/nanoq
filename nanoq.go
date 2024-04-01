@@ -151,7 +151,7 @@ func (q *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error)
 // The claim is valid until the transaction is committed or rolled back.
 func (q *Client) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
 	t := Task{}
-	err := tx.GetContext(ctx, &t, `SELECT * FROM tasks WHERE scheduled_at <= UTC_TIMESTAMP() ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)
+	err := tx.GetContext(ctx, &t, `SELECT * FROM tasks WHERE scheduled_at <= UTC_TIMESTAMP() ORDER BY scheduled_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return t, ErrNoTasks
