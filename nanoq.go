@@ -128,8 +128,8 @@ func NewClient(db *sqlx.DB) *Client {
 //
 // The transaction will be rolled back if the function returns an error.
 // Otherwise, it will be committed.
-func (q *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error {
-	tx, err := q.db.BeginTxx(ctx, nil)
+func (c *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error {
+	tx, err := c.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -149,7 +149,7 @@ func (q *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error)
 // ClaimTask claims a task for processing.
 //
 // The claim is valid until the transaction is committed or rolled back.
-func (q *Client) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
+func (c *Client) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
 	t := Task{}
 	err := tx.GetContext(ctx, &t, `SELECT * FROM tasks WHERE scheduled_at <= UTC_TIMESTAMP() ORDER BY scheduled_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)
 	if err != nil {
@@ -165,7 +165,7 @@ func (q *Client) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
 // CreateTask creates the given task.
 //
 // Returns ErrDuplicateTask if a task with the same fingerprint already exists.
-func (q *Client) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+func (c *Client) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `
 		INSERT INTO tasks
 			(id, fingerprint, type, payload, retries, max_retries, created_at, scheduled_at)
@@ -182,7 +182,7 @@ func (q *Client) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 }
 
 // UpdateTask updates the given task.
-func (q *Client) UpdateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+func (c *Client) UpdateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `UPDATE tasks SET retries = :retries, scheduled_at = :scheduled_at WHERE id = :id`, t)
 	if err != nil {
 		return err
@@ -192,7 +192,7 @@ func (q *Client) UpdateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 }
 
 // DeleteTask deletes the given task.
-func (q *Client) DeleteTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+func (c *Client) DeleteTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `DELETE FROM tasks WHERE id = :id`, t)
 	if err != nil {
 		return err
