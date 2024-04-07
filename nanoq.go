@@ -10,6 +10,8 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -335,7 +337,7 @@ func (p *Processor) process(ctx context.Context) error {
 			h = p.middleware[i](h)
 		}
 
-		if err = h(ctx, t); err != nil {
+		if err = callHandler(ctx, h, t); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return fmt.Errorf("task %v canceled: %v", t.ID, context.Cause(ctx))
 			}
@@ -361,6 +363,28 @@ func (p *Processor) process(ctx context.Context) error {
 
 		return nil
 	})
+}
+
+// callHandler calls the given handler, converting panics into errors.
+func callHandler(ctx context.Context, h Handler, t Task) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			var file string
+			var line int
+			// Skip the first two frames (callHandler, panic).
+			// If the panic came from the runtime, find the first application frame.
+			for i := 2; i < 10; i++ {
+				_, file, line, _ = runtime.Caller(i)
+				if !strings.HasPrefix(file, "runtime/") {
+					break
+				}
+			}
+
+			err = fmt.Errorf("panic [%s:%d]: %v: %w", file, line, r, ErrSkipRetry)
+		}
+	}()
+
+	return h(ctx, t)
 }
 
 // getNextRetryTime returns the time of the next retry.
