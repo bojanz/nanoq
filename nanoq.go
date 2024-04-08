@@ -329,7 +329,7 @@ func (p *Processor) process(ctx context.Context) error {
 		h, ok := p.handlers[t.Type]
 		if !ok {
 			h = func(ctx context.Context, t Task) error {
-				return fmt.Errorf("no handler not found for task type %v", t.Type)
+				return fmt.Errorf("no handler found for task type %v: %w", t.Type, ErrSkipRetry)
 			}
 		}
 		// Apply global middleware.
