@@ -257,7 +257,7 @@ func TestProcessor_Run_SkipRetry(t *testing.T) {
 	})
 	errorHandlerCalled := 0
 	processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
-		if !errors.Is(err, nanoq.ErrSkipRetry) && !strings.Contains("something terrible happened", err.Error()) {
+		if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "something terrible happened") {
 			t.Errorf("error handler called with unexpected error: %v", err)
 		}
 		errorHandlerCalled++
@@ -298,7 +298,7 @@ func TestProcessor_Run_Panic(t *testing.T) {
 	})
 	errorHandlerCalled := 0
 	processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
-		if !errors.Is(err, nanoq.ErrSkipRetry) && !strings.Contains("oh no", err.Error()) {
+		if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "oh no") {
 			t.Errorf("error handler called with unexpected error: %v", err)
 		}
 		errorHandlerCalled++
@@ -336,7 +336,7 @@ func TestProcessor_Run_NoHandler(t *testing.T) {
 	processor := nanoq.NewProcessor(client, zerolog.Nop())
 	errorHandlerCalled := 0
 	processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
-		if !errors.Is(err, nanoq.ErrSkipRetry) && !strings.Contains("no handler found for task type my-type", err.Error()) {
+		if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "no handler found for task type my-type") {
 			t.Errorf("error handler called with unexpected error: %v", err)
 		}
 		errorHandlerCalled++
