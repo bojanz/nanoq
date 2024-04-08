@@ -8,6 +8,7 @@ CREATE TABLE `tasks` (
   `payload` json NOT NULL,
   `retries` tinyint(3) unsigned NOT NULL DEFAULT 0,
   `max_retries` tinyint(3) unsigned NOT NULL DEFAULT 10,
+  `timeout_seconds` int(11) NOT NULL DEFAULT 60,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `scheduled_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),

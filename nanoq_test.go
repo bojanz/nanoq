@@ -33,6 +33,12 @@ func Test_NewTask(t *testing.T) {
 		if task.MaxRetries != 10 {
 			t.Errorf("max retries: got %v, want %v", task.MaxRetries, 10)
 		}
+		if task.TimeoutSeconds != 60 {
+			t.Errorf("timeout seconds: got %v, want %v", task.TimeoutSeconds, 60)
+		}
+		if task.Timeout() != 60*time.Second {
+			t.Errorf("timeout: got %v, want %v", task.Timeout(), 60*time.Second)
+		}
 		if task.CreatedAt.IsZero() {
 			t.Errorf("created_at must not be empty")
 		}
@@ -50,7 +56,7 @@ func Test_NewTask(t *testing.T) {
 	t.Run("payload_and_options", func(t *testing.T) {
 		payload := []byte(`{"product_id": "123", "user_id": "456"}`)
 		scheduledAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-		task := nanoq.NewTask("my-type", payload, nanoq.WithMaxRetries(2), nanoq.WithScheduledAt(scheduledAt))
+		task := nanoq.NewTask("my-type", payload, nanoq.WithMaxRetries(2), nanoq.WithTimeout(30*time.Second), nanoq.WithScheduledAt(scheduledAt))
 
 		if _, err := ulid.ParseStrict(task.ID); err != nil {
 			t.Errorf("id: %v", err)
@@ -63,6 +69,12 @@ func Test_NewTask(t *testing.T) {
 		}
 		if task.MaxRetries != 2 {
 			t.Errorf("max retries: got %v, want %v", task.MaxRetries, 2)
+		}
+		if task.TimeoutSeconds != 30 {
+			t.Errorf("timeout seconds: got %v, want %v", task.TimeoutSeconds, 60)
+		}
+		if task.Timeout() != 30*time.Second {
+			t.Errorf("timeout: got %v, want %v", task.Timeout(), 30*time.Second)
 		}
 		if task.CreatedAt.IsZero() {
 			t.Errorf("created_at must not be empty")
@@ -102,7 +114,7 @@ func TestClient_CreateTask(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectExec(`INSERT INTO tasks(.+) VALUES(.+)`).
-			WithArgs(task.ID, task.Fingerprint, task.Type, task.Payload, task.Retries, task.MaxRetries, task.CreatedAt, task.ScheduledAt).
+			WithArgs(task.ID, task.Fingerprint, task.Type, task.Payload, task.MaxRetries, task.TimeoutSeconds, task.CreatedAt, task.ScheduledAt).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -118,7 +130,7 @@ func TestClient_CreateTask(t *testing.T) {
 	t.Run("duplicate", func(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectExec(`INSERT INTO tasks(.+) VALUES(.+)`).
-			WithArgs(task.ID, task.Fingerprint, task.Type, task.Payload, task.Retries, task.MaxRetries, task.CreatedAt, task.ScheduledAt).
+			WithArgs(task.ID, task.Fingerprint, task.Type, task.Payload, task.MaxRetries, task.TimeoutSeconds, task.CreatedAt, task.ScheduledAt).
 			WillReturnError(&mysql.MySQLError{Number: 1022})
 		mock.ExpectRollback()
 
@@ -154,8 +166,8 @@ func TestProcessor_Run(t *testing.T) {
 
 	// First task claim and retry.
 	mock.ExpectBegin()
-	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "created_at", "scheduled_at"}).
-		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", time.Now(), time.Now())
+	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET retries = (.+), scheduled_at = (.+) WHERE id = (.+)").WithArgs(1, sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
@@ -164,8 +176,8 @@ func TestProcessor_Run(t *testing.T) {
 
 	// Second task claim and deletion (due to success).
 	mock.ExpectBegin()
-	rows = sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "created_at", "scheduled_at"}).
-		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "1", "1", time.Now(), time.Now())
+	rows = sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "1", "1", "60", time.Now(), time.Now())
 	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").
@@ -202,8 +214,8 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 
 	// First task claim and retry.
 	mock.ExpectBegin()
-	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "created_at", "scheduled_at"}).
-		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", time.Now(), time.Now())
+	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET retries = (.+), scheduled_at = (.+) WHERE id = (.+)").WithArgs(1, sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
@@ -212,8 +224,8 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 
 	// Second task claim and deletion (due to exhausted retries).
 	mock.ExpectBegin()
-	rows = sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "created_at", "scheduled_at"}).
-		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "1", "1", time.Now(), time.Now())
+	rows = sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "1", "1", "60", time.Now(), time.Now())
 	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").
@@ -253,8 +265,8 @@ func TestProcessor_Run_SkipRetry(t *testing.T) {
 
 	// Task claim and deletion.
 	mock.ExpectBegin()
-	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "created_at", "scheduled_at"}).
-		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", time.Now(), time.Now())
+	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").
@@ -294,8 +306,8 @@ func TestProcessor_Run_Panic(t *testing.T) {
 
 	// Task claim and deletion.
 	mock.ExpectBegin()
-	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "created_at", "scheduled_at"}).
-		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", time.Now(), time.Now())
+	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").
@@ -332,8 +344,8 @@ func TestProcessor_Run_NoHandler(t *testing.T) {
 
 	// Task claim and deletion.
 	mock.ExpectBegin()
-	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "created_at", "scheduled_at"}).
-		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", time.Now(), time.Now())
+	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").
@@ -426,8 +438,8 @@ func TestProcessor_Run_Middleware(t *testing.T) {
 
 	// Task claim and deletion.
 	mock.ExpectBegin()
-	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "created_at", "scheduled_at"}).
-		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", time.Now(), time.Now())
+	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").

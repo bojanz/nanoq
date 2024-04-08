@@ -33,18 +33,22 @@ var (
 
 	// ErrSkipRetry indicates that the task should not be retried.
 	ErrSkipRetry = errors.New("skip retry")
+
+	// ErrTaskTimeout indicates that the task timeout has been exceeded.
+	ErrTaskTimeout = errors.New("task timeout exceeded")
 )
 
 // Task represents a task.
 type Task struct {
-	ID          string    `db:"id"`
-	Fingerprint string    `db:"fingerprint"`
-	Type        string    `db:"type"`
-	Payload     []byte    `db:"payload"`
-	Retries     uint8     `db:"retries"`
-	MaxRetries  uint8     `db:"max_retries"`
-	CreatedAt   time.Time `db:"created_at"`
-	ScheduledAt time.Time `db:"scheduled_at"`
+	ID             string    `db:"id"`
+	Fingerprint    string    `db:"fingerprint"`
+	Type           string    `db:"type"`
+	Payload        []byte    `db:"payload"`
+	Retries        uint8     `db:"retries"`
+	MaxRetries     uint8     `db:"max_retries"`
+	TimeoutSeconds int32     `db:"timeout_seconds"`
+	CreatedAt      time.Time `db:"created_at"`
+	ScheduledAt    time.Time `db:"scheduled_at"`
 }
 
 // NewTask creates a new task.
@@ -55,12 +59,13 @@ func NewTask(taskType string, payload []byte, opts ...TaskOption) Task {
 	}
 	now := time.Now().UTC()
 	t := Task{
-		ID:          ulid.Make().String(),
-		Type:        taskType,
-		Payload:     payload,
-		MaxRetries:  10,
-		CreatedAt:   now,
-		ScheduledAt: now,
+		ID:             ulid.Make().String(),
+		Type:           taskType,
+		Payload:        payload,
+		MaxRetries:     10,
+		TimeoutSeconds: 60,
+		CreatedAt:      now,
+		ScheduledAt:    now,
 	}
 	for _, opt := range opts {
 		opt(&t)
@@ -70,6 +75,11 @@ func NewTask(taskType string, payload []byte, opts ...TaskOption) Task {
 	}
 
 	return t
+}
+
+// Timeout returns the task timeout as a time.Duration.
+func (t Task) Timeout() time.Duration {
+	return time.Duration(t.TimeoutSeconds) * time.Second
 }
 
 // TaskOption represents a task option.
@@ -90,6 +100,15 @@ func WithFingerprintData(data []byte) TaskOption {
 func WithMaxRetries(maxRetries uint8) TaskOption {
 	return func(t *Task) {
 		t.MaxRetries = maxRetries
+	}
+}
+
+// WithTimeout sets the task timeout.
+//
+// Must be at least 1s. Defaults to 60s.
+func WithTimeout(timeout time.Duration) TaskOption {
+	return func(t *Task) {
+		t.TimeoutSeconds = int32(timeout.Seconds())
 	}
 }
 
@@ -170,9 +189,9 @@ func (c *Client) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
 func (c *Client) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `
 		INSERT INTO tasks
-			(id, fingerprint, type, payload, retries, max_retries, created_at, scheduled_at)
+			(id, fingerprint, type, payload, max_retries, timeout_seconds, created_at, scheduled_at)
 		VALUES
-			(:id, :fingerprint, :type, :payload, :retries, :max_retries, :created_at, :scheduled_at)`, t)
+			(:id, :fingerprint, :type, :payload, :max_retries, :timeout_seconds, :created_at, :scheduled_at)`, t)
 	if err != nil {
 		if isConflictError(err) {
 			return ErrDuplicateTask
@@ -341,6 +360,10 @@ func (p *Processor) process(ctx context.Context) error {
 			if errors.Is(err, context.Canceled) {
 				return fmt.Errorf("task %v canceled: %v", t.ID, context.Cause(ctx))
 			}
+			// Extract a more specific timeout error, if any.
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = context.Cause(ctx)
+			}
 
 			if p.errorHandler != nil {
 				p.errorHandler(ctx, t, err)
@@ -383,6 +406,8 @@ func callHandler(ctx context.Context, h Handler, t Task) (err error) {
 			err = fmt.Errorf("panic [%s:%d]: %v: %w", file, line, r, ErrSkipRetry)
 		}
 	}()
+	ctx, cancel := context.WithTimeoutCause(ctx, t.Timeout(), ErrTaskTimeout)
+	defer cancel()
 
 	return h(ctx, t)
 }

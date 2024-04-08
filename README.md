@@ -1,6 +1,6 @@
 # NanoQ
 
-NanoQ is a MySQL-powered task queue, implemented in ~300 lines of code.
+NanoQ is a MySQL-powered task queue, implemented in ~350 lines of code.
 
 While it can be used as-is, you are encouraged to copy-paste it into your project and customize it according to your tastes and needs.
 
@@ -12,8 +12,9 @@ Due to its use of SKIP LOCKED, NanoQ requires MySQL 8.0 or newer / MariaDB 10.6.
 
 1. Delayed tasks
 2. Unique tasks (automatic fingerprinting based on task type and payload)
-3. Retries (with exponential backoff and jitter)
-4. Processor with global and per-handler middleware
+3. Per-task timeouts
+4. Retries (with exponential backoff and jitter)
+5. Processor with global and per-handler middleware
 
 Failed and completed tasks are not retained in the database.
 
@@ -56,7 +57,7 @@ queueClient := nanoq.Client(db)
 payload, _ := json.Marshal(recalculateStockPayload{
 	ProductID: "my-product",
 })
-t := nanoq.NewTask("recalculate-stock", payload, nanoq.WithScheduledIn(5 * time.Minute))
+t := nanoq.NewTask("recalculate-stock", payload, nanoq.WithTimeout(15*time.Second), nanoq.WithScheduledIn(5 * time.Minute))
 
 // The transaction (tx) usually already exists. Otherwise, queueClient.RunTransaction() can be used to start one.
 if err := queueClient.CreateTask(ctx, tx, t); err != nanoq.ErrDuplicateTask {
