@@ -145,23 +145,20 @@ func NewClient(db *sqlx.DB) *Client {
 	return &Client{db: db}
 }
 
-// RunTransaction runs the given function in a transaction.
+// CreateTask creates the given task.
 //
-// The transaction will be rolled back if the function returns an error.
-// Otherwise, it will be committed.
-func (c *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error {
-	tx, err := c.db.BeginTxx(ctx, nil)
+// Returns ErrDuplicateTask if a task with the same fingerprint already exists.
+func (c *Client) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+	_, err := tx.NamedExecContext(ctx, `
+		INSERT INTO tasks
+			(id, fingerprint, type, payload, max_retries, timeout_seconds, created_at, scheduled_at)
+		VALUES
+			(:id, :fingerprint, :type, :payload, :max_retries, :timeout_seconds, :created_at, :scheduled_at)`, t)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-
-	if err := fn(tx); err != nil {
-		tx.Rollback()
+		if isConflictError(err) {
+			return ErrDuplicateTask
+		}
 		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
 	}
 
 	return nil
@@ -183,25 +180,6 @@ func (c *Client) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
 	return t, nil
 }
 
-// CreateTask creates the given task.
-//
-// Returns ErrDuplicateTask if a task with the same fingerprint already exists.
-func (c *Client) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
-	_, err := tx.NamedExecContext(ctx, `
-		INSERT INTO tasks
-			(id, fingerprint, type, payload, max_retries, timeout_seconds, created_at, scheduled_at)
-		VALUES
-			(:id, :fingerprint, :type, :payload, :max_retries, :timeout_seconds, :created_at, :scheduled_at)`, t)
-	if err != nil {
-		if isConflictError(err) {
-			return ErrDuplicateTask
-		}
-		return err
-	}
-
-	return nil
-}
-
 // UpdateTask updates the given task.
 func (c *Client) UpdateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `UPDATE tasks SET retries = :retries, scheduled_at = :scheduled_at WHERE id = :id`, t)
@@ -217,6 +195,28 @@ func (c *Client) DeleteTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	_, err := tx.NamedExecContext(ctx, `DELETE FROM tasks WHERE id = :id`, t)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// RunTransaction runs the given function in a transaction.
+//
+// The transaction will be rolled back if the function returns an error.
+// Otherwise, it will be committed.
+func (c *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error {
+	tx, err := c.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+
+	if err := fn(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
 	}
 
 	return nil
