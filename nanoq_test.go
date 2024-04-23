@@ -185,9 +185,11 @@ func TestProcessor_Run(t *testing.T) {
 	mock.ExpectCommit()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go processor.Run(ctx, 1, 1*time.Second)
+	go processor.Run(ctx, 1, 1*time.Millisecond)
 	time.Sleep(1 * time.Second)
 	cancel()
+	// Wait for the processor to shut down.
+	time.Sleep(2 * time.Millisecond)
 
 	err := mock.ExpectationsWereMet()
 	if err != nil {
@@ -233,9 +235,11 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 	mock.ExpectCommit()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go processor.Run(ctx, 1, 1*time.Second)
+	go processor.Run(ctx, 1, 1*time.Millisecond)
 	time.Sleep(1 * time.Second)
 	cancel()
+	// Wait for the processor to shut down.
+	time.Sleep(2 * time.Millisecond)
 
 	err := mock.ExpectationsWereMet()
 	if err != nil {
@@ -274,9 +278,11 @@ func TestProcessor_Run_SkipRetry(t *testing.T) {
 	mock.ExpectCommit()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go processor.Run(ctx, 1, 1*time.Second)
+	go processor.Run(ctx, 1, 1*time.Millisecond)
 	time.Sleep(1 * time.Second)
 	cancel()
+	// Wait for the processor to shut down.
+	time.Sleep(2 * time.Millisecond)
 
 	err := mock.ExpectationsWereMet()
 	if err != nil {
@@ -315,9 +321,11 @@ func TestProcessor_Run_Panic(t *testing.T) {
 	mock.ExpectCommit()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go processor.Run(ctx, 1, 1*time.Second)
+	go processor.Run(ctx, 1, 1*time.Millisecond)
 	time.Sleep(1 * time.Second)
 	cancel()
+	// Wait for the processor to shut down.
+	time.Sleep(2 * time.Millisecond)
 
 	err := mock.ExpectationsWereMet()
 	if err != nil {
@@ -353,9 +361,11 @@ func TestProcessor_Run_NoHandler(t *testing.T) {
 	mock.ExpectCommit()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go processor.Run(ctx, 1, 1*time.Second)
+	go processor.Run(ctx, 1, 1*time.Millisecond)
 	time.Sleep(1 * time.Second)
 	cancel()
+	// Wait for the processor to shut down.
+	time.Sleep(2 * time.Millisecond)
 
 	err := mock.ExpectationsWereMet()
 	if err != nil {
@@ -447,9 +457,11 @@ func TestProcessor_Run_Middleware(t *testing.T) {
 	mock.ExpectCommit()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go processor.Run(ctx, 1, 1*time.Second)
+	go processor.Run(ctx, 1, 1*time.Millisecond)
 	time.Sleep(1 * time.Second)
 	cancel()
+	// Wait for the processor to shut down.
+	time.Sleep(2 * time.Millisecond)
 
 	err := mock.ExpectationsWereMet()
 	if err != nil {
