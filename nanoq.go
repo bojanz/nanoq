@@ -296,7 +296,7 @@ func (p *Processor) Handle(taskType string, h Handler, ms ...Middleware) {
 // The tasks that are still being processed are then given until shutdownTimeout to complete,
 // after which they are stopped (via canceled context).
 func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout time.Duration) {
-	processorCtx, cancel := context.WithCancelCause(ctx)
+	processorCtx, cancel := context.WithCancelCause(context.Background())
 	go func() {
 		shutdownCh := make(chan os.Signal, 1)
 		signal.Notify(shutdownCh, os.Interrupt, syscall.SIGTERM)
