@@ -70,6 +70,15 @@ Finally, initialize the processor:
 // logger is assumed to be a zerolog instance.
 processor := nanoq.NewProcessor(nanoq.NewClient(db), logger)
 
+// The default retry policy uses an exponential backoff with jitter,
+// but callers can provide their own if necessary.
+processor.RetryPolicy(func (t nanoq.Task) {
+	// First retry in 5s, every next retry in 1h.
+	if t.Retries == 0 {
+		return 5 * time.Second
+	}
+	return 1 * time.Hour
+})
 processor.OnError(func(ctx context.Context, t nanoq.Task, err error) {
 	// Log each failed task. 
 	// Idea: Send to Sentry when t.Retries == t.MaxRetries.

@@ -152,6 +152,11 @@ func TestProcessor_Run(t *testing.T) {
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
 	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	retryPolicyCalled := 0
+	processor.RetryPolicy(func(t nanoq.Task) time.Duration {
+		retryPolicyCalled++
+		return 1 * time.Second
+	})
 	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
 		// Fail the task once.
 		if task.Retries == 0 {
@@ -198,6 +203,10 @@ func TestProcessor_Run(t *testing.T) {
 
 	if errorHandlerCalled != 1 {
 		t.Errorf("erorr handler called %v times instead of %v", errorHandlerCalled, 1)
+	}
+
+	if retryPolicyCalled != 1 {
+		t.Errorf("retry policy called %v times instead of %v", retryPolicyCalled, 1)
 	}
 }
 

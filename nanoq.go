@@ -180,8 +180,11 @@ func (c *Client) ClaimTask(ctx context.Context, tx *sqlx.Tx) (Task, error) {
 	return t, nil
 }
 
-// UpdateTask updates the given task.
-func (c *Client) UpdateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
+// RetryTask schedules a retry of the given task.
+func (c *Client) RetryTask(ctx context.Context, tx *sqlx.Tx, t Task, retryIn time.Duration) error {
+	t.Retries++
+	t.ScheduledAt = time.Now().UTC().Add(retryIn)
+
 	_, err := tx.NamedExecContext(ctx, `UPDATE tasks SET retries = :retries, scheduled_at = :scheduled_at WHERE id = :id`, t)
 	if err != nil {
 		return err
@@ -247,7 +250,19 @@ type (
 
 	// Middleware wrap a handler in order to run logic before/after it.
 	Middleware func(next Handler) Handler
+
+	// RetryPolicy determines the retry delay for a given task.
+	RetryPolicy func(t Task) time.Duration
 )
+
+// DefaultRetryPolicy uses an exponential base delay with jitter.
+// Approximate examples: 7s, 50s, 5min, 20min, 50min, 2h, 4h, 9h, 16h, 27h.
+func DefaultRetryPolicy(t Task) time.Duration {
+	exp := 5 + int(math.Pow(float64(t.Retries+1), float64(5)))
+	s := exp + rand.IntN(exp/2)
+
+	return time.Duration(s) * time.Second
+}
 
 // Processor represents the queue processor.
 type Processor struct {
@@ -257,6 +272,7 @@ type Processor struct {
 	errorHandler ErrorHandler
 	handlers     map[string]Handler
 	middleware   []Middleware
+	retryPolicy  RetryPolicy
 
 	done atomic.Bool
 }
@@ -264,10 +280,11 @@ type Processor struct {
 // NewProcessor creates a new processor.
 func NewProcessor(client *Client, logger zerolog.Logger) *Processor {
 	return &Processor{
-		client:     client,
-		logger:     logger,
-		handlers:   make(map[string]Handler),
-		middleware: make([]Middleware, 0),
+		client:      client,
+		logger:      logger,
+		handlers:    make(map[string]Handler),
+		middleware:  make([]Middleware, 0),
+		retryPolicy: DefaultRetryPolicy,
 	}
 }
 
@@ -288,6 +305,11 @@ func (p *Processor) Handle(taskType string, h Handler, ms ...Middleware) {
 		h = ms[i](h)
 	}
 	p.handlers[taskType] = h
+}
+
+// RetryPolicy registers the given retry policy.
+func (p *Processor) RetryPolicy(rp RetryPolicy) {
+	p.retryPolicy = rp
 }
 
 // Run starts the processor and blocks until a shutdown signal (SIGINT/SIGTERM) is received.
@@ -369,10 +391,8 @@ func (p *Processor) process(ctx context.Context) error {
 				p.errorHandler(ctx, t, err)
 			}
 			if t.Retries < t.MaxRetries && !errors.Is(err, ErrSkipRetry) {
-				t.Retries = t.Retries + 1
-				t.ScheduledAt = getNextRetryTime(int(t.Retries))
-
-				if err := p.client.UpdateTask(ctx, tx, t); err != nil {
+				retryIn := p.retryPolicy(t)
+				if err := p.client.RetryTask(ctx, tx, t, retryIn); err != nil {
 					return fmt.Errorf("update task %v: %w", t.ID, err)
 				}
 
@@ -410,15 +430,4 @@ func callHandler(ctx context.Context, h Handler, t Task) (err error) {
 	defer cancel()
 
 	return h(ctx, t)
-}
-
-// getNextRetryTime returns the time of the next retry.
-// Uses an exponential base delay with jitter.
-// Approximate examples: 7s, 50s, 5min, 20min, 50min, 2h, 4h, 9h, 16h, 27h.
-func getNextRetryTime(n int) time.Time {
-	exp := 5 + int(math.Pow(float64(n), float64(5)))
-	s := exp + rand.IntN(exp/2)
-	d := time.Duration(s) * time.Second
-
-	return time.Now().UTC().Add(d)
 }
