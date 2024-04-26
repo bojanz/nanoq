@@ -11,6 +11,7 @@ CREATE TABLE `tasks` (
   `timeout_seconds` int(11) NOT NULL DEFAULT 60,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `scheduled_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `claimed_at` datetime(6),
   PRIMARY KEY (`id`),
   UNIQUE KEY `fingerprint` (`fingerprint`),
   KEY `scheduled_at` (`scheduled_at`)

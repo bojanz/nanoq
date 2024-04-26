@@ -1,6 +1,6 @@
 # NanoQ
 
-NanoQ is a MySQL-powered task queue, implemented in ~350 lines of code.
+NanoQ is a MySQL-powered task queue, implemented in ~400 lines of code.
 
 While it can be used as-is, you are encouraged to copy-paste it into your project and customize it according to your tastes and needs.
 
