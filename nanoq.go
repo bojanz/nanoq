@@ -412,14 +412,9 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 			return fmt.Errorf("task %v canceled: %v", t.ID, context.Cause(ctx))
 		}
 
-		if errors.Is(err, context.DeadlineExceeded) {
-			// Extract a more specific timeout error, if any.
-			err = context.Cause(ctx)
-		}
 		if p.errorHandler != nil {
 			p.errorHandler(ctx, t, err)
 		}
-
 		if t.Retries < t.MaxRetries && !errors.Is(err, ErrSkipRetry) {
 			retryIn := p.retryPolicy(t)
 			if err := p.client.RetryTask(ctx, t, retryIn); err != nil {
@@ -455,8 +450,17 @@ func callHandler(ctx context.Context, h Handler, t Task) (err error) {
 			err = fmt.Errorf("panic [%s:%d]: %v: %w", file, line, r, ErrSkipRetry)
 		}
 	}()
-	ctx, cancel := context.WithTimeoutCause(ctx, t.Timeout(), ErrTaskTimeout)
+	taskCtx, cancel := context.WithTimeoutCause(ctx, t.Timeout(), ErrTaskTimeout)
 	defer cancel()
 
-	return h(ctx, t)
+	err = h(taskCtx, t)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		// Extract a more specific timeout error, if any.
+		// context.Cause returns nil if the canceled context is a child of taskCtx.
+		if cerr := context.Cause(taskCtx); cerr != nil {
+			err = cerr
+		}
+	}
+
+	return err
 }

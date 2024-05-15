@@ -561,3 +561,58 @@ func TestProcessor_Run_Cancel(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestProcessor_Run_Timeout(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
+	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
+	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				continue
+			}
+		}
+	})
+	errorHandlerCalled := 0
+	processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
+		if !errors.Is(err, nanoq.ErrTaskTimeout) {
+			t.Errorf("error handler called with unexpected error: %v", err)
+		}
+		errorHandlerCalled++
+	})
+
+	// Task claim, timeout_seconds=1.
+	mock.ExpectBegin()
+	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "0", "1", time.Now(), time.Now())
+	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+
+	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go processor.Run(ctx, 1, 1*time.Millisecond)
+	time.Sleep(2 * time.Second)
+	cancel()
+	// Wait for the processor to shut down.
+	time.Sleep(2 * time.Millisecond)
+
+	err := mock.ExpectationsWereMet()
+	if err != nil {
+		t.Error(err)
+	}
+
+	if errorHandlerCalled != 1 {
+		t.Errorf("erorr handler called %v times instead of %v", errorHandlerCalled, 1)
+	}
+}
