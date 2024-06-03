@@ -30,7 +30,7 @@ type recalculateStockPayload struct {
 }
 
 // This could also be a method on a Handler struct containing dependencies.
-func RecalculateStock(logger zerolog.Logger) nanoq.Handler {
+func RecalculateStock(logger *slog.Logger) nanoq.Handler {
 	return func(ctx context.Context, t nanoq.Task) error {
 		var payload recalculateStockPayload
 		if err := json.Unmarshal(t.Payload, &payload); err != nil {
@@ -39,10 +39,10 @@ func RecalculateStock(logger zerolog.Logger) nanoq.Handler {
 
 		// Do your thing here.
 
-		logger.Info().
-			Str("task_type", "recalculate-stock").
-			Str("product_id", payload.ProductID).
-			Msg("Task completed")
+		logger.Info("Task completed",
+			slog.String("task_type", "recalculate-stock"),
+			slog.String("product_id", payload.ProductID),
+		)
 
 		return nil
 	}
@@ -67,7 +67,7 @@ if err := queueClient.CreateTask(ctx, tx, t); err != nanoq.ErrDuplicateTask {
 
 Finally, initialize the processor:
 ```go
-// logger is assumed to be a zerolog instance.
+// logger is an existing *slog.Logger.
 processor := nanoq.NewProcessor(nanoq.NewClient(db), logger)
 
 // The default retry policy uses an exponential backoff with jitter,
@@ -82,10 +82,10 @@ processor.RetryPolicy(func (t nanoq.Task) {
 processor.OnError(func(ctx context.Context, t nanoq.Task, err error) {
 	// Log each failed task. 
 	// Idea: Send to Sentry when t.Retries == t.MaxRetries.
-	logger.Error().
-		Str("task_type", t.Type).
-		Str("attempt", fmt.Sprintf("%v/%v", t.Retries, t.MaxRetries)).
-		Msg(err.Error())
+	logger.Error(err.Error(),
+		slog.String("task_type", t.Type),
+		slog.String("attempt", fmt.Sprintf("%v/%v", t.Retries, t.MaxRetries)),
+	)
 })
 processor.Handle("recalculate-stock", RecalculateStock(logger))
 

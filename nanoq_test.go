@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -14,7 +16,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	"github.com/oklog/ulid/v2"
-	"github.com/rs/zerolog"
 )
 
 func Test_NewTask(t *testing.T) {
@@ -151,7 +152,7 @@ func TestProcessor_Run(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
-	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	retryPolicyCalled := 0
 	processor.RetryPolicy(func(t nanoq.Task) time.Duration {
 		retryPolicyCalled++
@@ -224,7 +225,7 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
-	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
 		return errors.New("temporary error")
 	})
@@ -284,7 +285,7 @@ func TestProcessor_Run_SkipRetry(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
-	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
 		return fmt.Errorf("something terrible happened: %w", nanoq.ErrSkipRetry)
 	})
@@ -332,7 +333,7 @@ func TestProcessor_Run_Panic(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
-	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
 		panic(errors.New("oh no"))
 	})
@@ -380,7 +381,7 @@ func TestProcessor_Run_NoHandler(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
-	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	errorHandlerCalled := 0
 	processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
 		if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "no handler found for task type my-type") {
@@ -428,7 +429,7 @@ func TestProcessor_Run_Middleware(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
-	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	processor.Use(func(next nanoq.Handler) nanoq.Handler {
 		return func(ctx context.Context, t nanoq.Task) error {
 			middlewareValue := ctx.Value(contextKey("middleware"))
@@ -522,7 +523,7 @@ func TestProcessor_Run_Cancel(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
-	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
 		for {
 			select {
@@ -566,7 +567,7 @@ func TestProcessor_Run_Timeout(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
-	processor := nanoq.NewProcessor(client, zerolog.Nop())
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
 		for {
 			select {

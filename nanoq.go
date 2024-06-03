@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"log/slog"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -19,7 +20,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	"github.com/oklog/ulid/v2"
-	"github.com/rs/zerolog"
 )
 
 var (
@@ -291,7 +291,7 @@ func DefaultRetryPolicy(t Task) time.Duration {
 // Processor represents the queue processor.
 type Processor struct {
 	client *Client
-	logger zerolog.Logger
+	logger *slog.Logger
 
 	errorHandler ErrorHandler
 	handlers     map[string]Handler
@@ -303,7 +303,7 @@ type Processor struct {
 }
 
 // NewProcessor creates a new processor.
-func NewProcessor(client *Client, logger zerolog.Logger) *Processor {
+func NewProcessor(client *Client, logger *slog.Logger) *Processor {
 	return &Processor{
 		client:      client,
 		logger:      logger,
@@ -353,14 +353,14 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 		case <-ctx.Done():
 		}
 
-		p.logger.Info().Str("timeout", shutdownTimeout.String()).Msg("Shutting down processor")
+		p.logger.Info("Shutting down processor", slog.String("timeout", shutdownTimeout.String()))
 		p.done.Store(true)
 		time.AfterFunc(shutdownTimeout, func() {
 			cancel(errors.New("shutdown timeout reached"))
 		})
 	}()
 
-	p.logger.Info().Int("concurrency", concurrency).Msg("Starting processor")
+	p.logger.Info("Starting processor", slog.Int("concurrency", concurrency))
 	p.workers = make(chan struct{}, concurrency)
 	for !p.done.Load() {
 		// Acquire a worker before claiming a task, to avoid holding claimed tasks while all workers are busy.
@@ -369,7 +369,7 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 		t, err := p.client.ClaimTask(processorCtx)
 		if err != nil {
 			if !errors.Is(err, ErrNoTasks) && !errors.Is(err, context.Canceled) {
-				p.logger.Error().Err(err).Msg("Could not claim task")
+				p.logger.Error("Could not claim task", slog.Any("error", err))
 			}
 			<-p.workers
 			time.Sleep(1 * time.Second)
@@ -378,7 +378,7 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 
 		go func() {
 			if err = p.processTask(processorCtx, t); err != nil {
-				p.logger.Error().Err(err).Msg("Could not process task")
+				p.logger.Error("Could not process task", slog.Any("error", err))
 			}
 			<-p.workers
 		}()
