@@ -22,11 +22,17 @@ Failed and completed tasks are not retained in the database.
 
 Add table.sql to your migrations.
 
-Define a task payload and a handler to process it:
+Define a task and a handler to process it:
 ```go
-// recalculateStockPayload is the payload for the recalculate stock task.
 type recalculateStockPayload struct {
 	ProductID string `json:"product_id"`
+}
+
+func NewRecalculateStockTask(productID string) nanoq.Task {
+	payload, _ := json.Marshal(recalculateStockPayload{
+		ProductID: productID,
+	})
+	return nanoq.NewTask("recalculate-stock", payload, nanoq.WithTimeout(15*time.Second), nanoq.WithScheduledIn(5 * time.Minute))
 }
 
 // This could also be a method on a Handler struct containing dependencies.
@@ -54,14 +60,11 @@ Create a task (usually in an HTTP handler):
 // Usually provided to the HTTP handler.
 queueClient := nanoq.Client(db)
 
-payload, _ := json.Marshal(recalculateStockPayload{
-	ProductID: "my-product",
-})
-t := nanoq.NewTask("recalculate-stock", payload, nanoq.WithTimeout(15*time.Second), nanoq.WithScheduledIn(5 * time.Minute))
-
 // The transaction (tx) usually already exists. Otherwise, queueClient.RunTransaction() can be used to start one.
+t := NewRecalculateStockTask("my-product")
 if err := queueClient.CreateTask(ctx, tx, t); err != nanoq.ErrDuplicateTask {
-	// Handle error.
+	// Handle unexpected errors.
+	// Ignores ErrDuplicateTask because multiple HTTP requests can require the same stock recalculation.
 }
 ```
 
