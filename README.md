@@ -32,7 +32,7 @@ func NewRecalculateStockTask(productID string) nanoq.Task {
 	payload, _ := json.Marshal(recalculateStockPayload{
 		ProductID: productID,
 	})
-	return nanoq.NewTask("recalculate-stock", payload, nanoq.WithTimeout(15*time.Second), nanoq.WithScheduledIn(5 * time.Minute))
+	return nanoq.NewTask("recalculate-stock", payload, nanoq.WithTimeout(15*time.Second), nanoq.WithScheduledIn(5*time.Minute))
 }
 
 // This could also be a method on a Handler struct containing dependencies.
@@ -58,13 +58,13 @@ func RecalculateStock(logger *slog.Logger) nanoq.Handler {
 Create a task (usually in an HTTP handler):
 ```go
 // Usually provided to the HTTP handler.
-queueClient := nanoq.Client(db)
+queueClient := nanoq.NewClient(db)
 
 // The transaction (tx) usually already exists. Otherwise, queueClient.RunTransaction() can be used to start one.
 t := NewRecalculateStockTask("my-product")
-if err := queueClient.CreateTask(ctx, tx, t); err != nanoq.ErrDuplicateTask {
+// Ignores ErrDuplicateTask because multiple HTTP requests can require the same stock recalculation.
+if err := queueClient.CreateTask(ctx, tx, t); err != nil && !errors.Is(err, nanoq.ErrDuplicateTask) {
 	// Handle unexpected errors.
-	// Ignores ErrDuplicateTask because multiple HTTP requests can require the same stock recalculation.
 }
 ```
 
@@ -75,7 +75,7 @@ processor := nanoq.NewProcessor(nanoq.NewClient(db), logger)
 
 // The default retry policy uses an exponential backoff with jitter,
 // but callers can provide their own if necessary.
-processor.RetryPolicy(func (t nanoq.Task) {
+processor.RetryPolicy(func(t nanoq.Task) time.Duration {
 	// First retry in 5s, every next retry in 1h.
 	if t.Retries == 0 {
 		return 5 * time.Second
@@ -83,7 +83,7 @@ processor.RetryPolicy(func (t nanoq.Task) {
 	return 1 * time.Hour
 })
 processor.OnError(func(ctx context.Context, t nanoq.Task, err error) {
-	// Log each failed task. 
+	// Log each failed task.
 	// Idea: Send to Sentry when t.Retries == t.MaxRetries.
 	logger.Error(err.Error(),
 		slog.String("task_type", t.Type),
@@ -93,7 +93,7 @@ processor.OnError(func(ctx context.Context, t nanoq.Task, err error) {
 processor.Handle("recalculate-stock", RecalculateStock(logger))
 
 // Use as many workers as we have CPUs.
-processor.Run(context.Background(), runtime.NumCPU(), 5 * time.Second)
+processor.Run(context.Background(), runtime.NumCPU(), 5*time.Second)
 ```
 
 
