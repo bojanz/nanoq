@@ -175,7 +175,9 @@ func (c *Client) ClaimTask(ctx context.Context) (Task, error) {
 		// If a task is still claimed after that point, it likely means that the processor has crashed, requiring the task to be reclaimed.
 		// Task are reclaimed after timeout_seconds * 1.1, to allow for extra processing to occur post-cancelation.
 		err := tx.GetContext(ctx, &t, `
-			SELECT * FROM tasks
+			SELECT
+				id, fingerprint, type, payload, retries, max_retries, timeout_seconds, created_at, scheduled_at, claimed_at
+			FROM tasks
 			WHERE scheduled_at <= UTC_TIMESTAMP()
 				AND (claimed_at IS NULL OR DATE_ADD(claimed_at, INTERVAL timeout_seconds*1.1 SECOND) < UTC_TIMESTAMP())
 			ORDER BY scheduled_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)

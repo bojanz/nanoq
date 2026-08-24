@@ -174,7 +174,7 @@ func TestProcessor_Run(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -189,7 +189,7 @@ func TestProcessor_Run(t *testing.T) {
 	mock.ExpectBegin()
 	rows = sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "1", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -238,7 +238,7 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -253,7 +253,7 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 	mock.ExpectBegin()
 	rows = sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "1", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -301,7 +301,7 @@ func TestProcessor_Run_SkipRetry(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -349,7 +349,7 @@ func TestProcessor_Run_Panic(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -394,7 +394,7 @@ func TestProcessor_Run_NoHandler(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -495,7 +495,7 @@ func TestProcessor_Run_Middleware(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -539,7 +539,7 @@ func TestProcessor_Run_Cancel(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -590,7 +590,7 @@ func TestProcessor_Run_Timeout(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
 		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "25c084d0", "my-type", "{}", "0", "0", "1", time.Now(), time.Now())
-	mock.ExpectQuery(`SELECT \* FROM tasks WHERE(.+)`).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
 	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 		WillReturnResult(sqlmock.NewResult(0, 1))
