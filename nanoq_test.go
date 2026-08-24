@@ -335,11 +335,12 @@ func TestProcessor_Run_Panic(t *testing.T) {
 	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
 	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
-		panic(errors.New("oh no"))
+		_ = task.Payload[len(task.Payload)]
+		return nil
 	})
 	errorHandlerCalled := 0
 	processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
-		if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "oh no") {
+		if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "nanoq_test.go:") || !strings.Contains(err.Error(), "index out of range") {
 			t.Errorf("error handler called with unexpected error: %v", err)
 		}
 		errorHandlerCalled++
