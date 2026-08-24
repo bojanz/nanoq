@@ -2,10 +2,11 @@ package nanoq
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"log/slog"
 	"math"
 	"math/rand/v2"
@@ -127,12 +128,14 @@ func WithScheduledIn(scheduledIn time.Duration) TaskOption {
 }
 
 // getFingerprint returns the fingerprint for the given data.
-// The fingerprint is a hash, base16 encoded and 8 characters long.
+// The fingerprint is a hash, base16 encoded and 16 characters long.
 func getFingerprint(taskType string, data []byte) string {
-	crc32q := crc32.MakeTable(crc32.Castagnoli)
-	fingerprint := crc32.Checksum(append(data, taskType...), crc32q)
+	h := sha256.New()
+	h.Write([]byte(taskType))
+	h.Write([]byte{'|'})
+	h.Write(data)
 
-	return fmt.Sprintf("%x", fingerprint)
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 // Client represents a database-backed queue client.

@@ -3,7 +3,7 @@
 
 CREATE TABLE `tasks` (
   `id` char(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  `fingerprint` char(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `fingerprint` char(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `type` varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `payload` json NOT NULL,
   `retries` tinyint(3) unsigned NOT NULL DEFAULT 0,
