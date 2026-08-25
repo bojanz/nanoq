@@ -181,8 +181,8 @@ func (c *Client) ClaimTask(ctx context.Context) (Task, error) {
 			SELECT
 				id, fingerprint, type, payload, retries, max_retries, timeout_seconds, created_at, scheduled_at, claimed_at
 			FROM tasks
-			WHERE scheduled_at <= UTC_TIMESTAMP()
-				AND (claimed_at IS NULL OR DATE_ADD(claimed_at, INTERVAL timeout_seconds*1.1 SECOND) < UTC_TIMESTAMP())
+			WHERE scheduled_at <= UTC_TIMESTAMP(6)
+				AND (claimed_at IS NULL OR DATE_ADD(claimed_at, INTERVAL timeout_seconds*1.1 SECOND) < UTC_TIMESTAMP(6))
 			ORDER BY scheduled_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
