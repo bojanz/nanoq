@@ -564,6 +564,52 @@ func TestProcessor_Run_Cancel(t *testing.T) {
 	}
 }
 
+func TestProcessor_Run_HandlerCanceled(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
+	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
+	processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// A canceled error from the handler itself is a failed task, not a shutdown.
+	processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
+		return fmt.Errorf("sub-operation aborted: %w", context.Canceled)
+	})
+	errorHandlerCalled := 0
+	processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
+		errorHandlerCalled++
+	})
+
+	// Task claim and retry.
+	mock.ExpectBegin()
+	rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+		AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
+	mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
+
+	mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE tasks SET retries = (.+), scheduled_at = (.+), claimed_at = (.+) WHERE id = (.+)").WithArgs(1, sqlmock.AnyArg(), nil, "01HQJHTZCAT5WDCGVTWJ640VMM").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go processor.Run(ctx, 1, 1*time.Millisecond)
+	time.Sleep(1 * time.Second)
+	cancel()
+	// Wait for the processor to shut down.
+	time.Sleep(2 * time.Millisecond)
+
+	err := mock.ExpectationsWereMet()
+	if err != nil {
+		t.Error(err)
+	}
+
+	if errorHandlerCalled == 0 {
+		t.Errorf("error handler was never called")
+	}
+}
+
 func TestProcessor_Run_Timeout(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()

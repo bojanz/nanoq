@@ -409,7 +409,7 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 	}
 
 	if err := callHandler(ctx, h, t); err != nil {
-		if errors.Is(err, context.Canceled) {
+		if ctx.Err() != nil {
 			// The processor is shutting down. Release the task and exit.
 			if err = p.client.ReleaseTask(context.Background(), t); err != nil {
 				return fmt.Errorf("release task %v: %w", t.ID, err)
