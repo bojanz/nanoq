@@ -234,16 +234,16 @@ func (c *Client) RetryTask(ctx context.Context, t Task, retryIn time.Duration) e
 
 // RunTransaction runs the given function in a transaction.
 //
-// The transaction will be rolled back if the function returns an error.
+// The transaction will be rolled back if the function returns an error or panics.
 // Otherwise, it will be committed.
 func (c *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error {
 	tx, err := c.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer tx.Rollback()
 
 	if err := fn(tx); err != nil {
-		tx.Rollback()
 		return err
 	}
 

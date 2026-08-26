@@ -148,6 +148,33 @@ func TestClient_CreateTask(t *testing.T) {
 	})
 }
 
+func TestClient_RunTransaction_Panic(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
+	client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	panicked := false
+	func() {
+		defer func() {
+			panicked = recover() != nil
+		}()
+		client.RunTransaction(context.Background(), func(tx *sqlx.Tx) error {
+			panic("oh no")
+		})
+	}()
+
+	if !panicked {
+		t.Errorf("the panic did not reach the caller")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestProcessor_Run(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
