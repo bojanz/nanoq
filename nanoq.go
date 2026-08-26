@@ -256,7 +256,7 @@ func (c *Client) RunTransaction(ctx context.Context, fn func(tx *sqlx.Tx) error)
 
 // isConflictError checks whether the given error is a MySQL / MariaDB conflict error.
 func isConflictError(err error) bool {
-	if sqlErr, ok := err.(*mysql.MySQLError); ok {
+	if sqlErr, ok := errors.AsType[*mysql.MySQLError](err); ok {
 		switch sqlErr.Number {
 		case 1022, 1062, 1088, 1092, 1586, 1761, 1762:
 			return true
