@@ -10,12 +10,9 @@ import (
 	"log/slog"
 	"math"
 	"math/rand/v2"
-	"os"
-	"os/signal"
 	"runtime"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -342,21 +339,17 @@ func (p *Processor) RetryPolicy(rp RetryPolicy) {
 	p.retryPolicy = rp
 }
 
-// Run starts the processor and blocks until a shutdown signal (SIGINT/SIGTERM) is received.
+// Run starts the processor and blocks until the given context is canceled.
 //
-// Once the shutdown signal is received, workers stop claiming new tasks.
-// The tasks that are still being processed are then given until shutdownTimeout to complete,
-// after which they are stopped (via canceled context).
+// Once the context is canceled, workers stop claiming new tasks.
+// Tasks that are still being processed are then given until shutdownTimeout
+// to complete, after which they are stopped (via canceled context).
+//
+// Pass a context from signal.NotifyContext to shut down on SIGINT/SIGTERM.
 func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout time.Duration) {
 	processorCtx, cancel := context.WithCancelCause(context.Background())
 	go func() {
-		shutdownCh := make(chan os.Signal, 1)
-		signal.Notify(shutdownCh, os.Interrupt, syscall.SIGTERM)
-
-		select {
-		case <-shutdownCh:
-		case <-ctx.Done():
-		}
+		<-ctx.Done()
 
 		p.logger.Info("Shutting down processor", slog.String("timeout", shutdownTimeout.String()))
 		p.done.Store(true)

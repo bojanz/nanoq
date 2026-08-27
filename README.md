@@ -92,8 +92,12 @@ processor.OnError(func(ctx context.Context, t nanoq.Task, err error) {
 })
 processor.Handle("recalculate-stock", RecalculateStock(logger))
 
+// The processor runs until the context is canceled.
+ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+defer stop()
+
 // Use as many workers as we have CPUs.
-processor.Run(context.Background(), runtime.NumCPU(), 5*time.Second)
+processor.Run(ctx, runtime.NumCPU(), 5*time.Second)
 ```
 
 
