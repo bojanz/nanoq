@@ -415,7 +415,7 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 		}
 		if t.Retries < t.MaxRetries && !errors.Is(err, ErrSkipRetry) {
 			retryIn := p.retryPolicy(t)
-			if err := p.client.RetryTask(ctx, t, retryIn); err != nil {
+			if err := p.client.RetryTask(context.Background(), t, retryIn); err != nil {
 				return fmt.Errorf("retry task %v: %w", t.ID, err)
 			}
 
@@ -423,7 +423,7 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 		}
 	}
 
-	if err := p.client.DeleteTask(ctx, t); err != nil {
+	if err := p.client.DeleteTask(context.Background(), t); err != nil {
 		return fmt.Errorf("delete task %v: %w", t.ID, err)
 	}
 

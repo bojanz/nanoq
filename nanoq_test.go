@@ -680,6 +680,54 @@ func TestProcessor_Run_HandlerCanceled(t *testing.T) {
 	})
 }
 
+func TestProcessor_Run_ShutdownDuringHandler(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db, mock, _ := sqlmock.New()
+		defer db.Close()
+		client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
+		processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		// Succeeds, but only once the shutdown deadline has already passed.
+		// Allows us to confirm that the task gets deleted after processing
+		// despite the context already being cancelled.
+		processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
+			<-ctx.Done()
+
+			return nil
+		})
+
+		// Task claim and deletion.
+		mock.ExpectBegin()
+		rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"}).
+			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
+		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
+
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		mock.ExpectBegin()
+		mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			processor.Run(ctx, 1, 1*time.Millisecond)
+			close(done)
+		}()
+		// Wait until the handler is running.
+		synctest.Wait()
+		cancel()
+		// Wait for the processor to shut down.
+		<-done
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
 func TestProcessor_Run_Timeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		db, mock, _ := sqlmock.New()
