@@ -439,7 +439,10 @@ func callHandler(ctx context.Context, h Handler, t Task) (err error) {
 			// Skip the first two frames (callHandler, panic).
 			// If the panic came from the runtime, find the first application frame.
 			for i := 2; i < 10; i++ {
-				pc, callerFile, callerLine, _ := runtime.Caller(i)
+				pc, callerFile, callerLine, ok := runtime.Caller(i)
+				if !ok {
+					break
+				}
 				file, line = callerFile, callerLine
 				fn := runtime.FuncForPC(pc)
 				if fn == nil || !strings.HasPrefix(fn.Name(), "runtime.") {
