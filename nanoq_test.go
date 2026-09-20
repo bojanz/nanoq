@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -205,7 +206,7 @@ func TestProcessor_Run(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -220,7 +221,7 @@ func TestProcessor_Run(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "1", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -255,6 +256,56 @@ func TestProcessor_Run(t *testing.T) {
 	})
 }
 
+func TestProcessor_Run_Batch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db, mock, _ := sqlmock.New()
+		defer db.Close()
+		client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
+		processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		var handled atomic.Int64
+		processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
+			handled.Add(1)
+
+			return nil
+		})
+
+		ids := []string{"01HQJHTZCAT5WDCGVTWJ640VM1", "01HQJHTZCAT5WDCGVTWJ640VM2", "01HQJHTZCAT5WDCGVTWJ640VM3"}
+		rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"})
+		for i, id := range ids {
+			rows.AddRow(id, fmt.Sprintf("6cd73f74b18578f%d", i), "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
+		}
+
+		// Every worker is free, so the claim asks for one task per worker and
+		// takes them all in a single transaction.
+		mock.ExpectBegin()
+		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WithArgs(len(ids)).WillReturnRows(rows)
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").
+			WithArgs(sqlmock.AnyArg(), ids[0], ids[1], ids[2]).
+			WillReturnResult(sqlmock.NewResult(0, int64(len(ids))))
+		mock.ExpectCommit()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			processor.Run(ctx, len(ids), 1*time.Millisecond)
+			close(done)
+		}()
+		// Wait until the processor has nothing left to do.
+		synctest.Wait()
+		cancel()
+		// Wait for the processor to shut down.
+		<-done
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Error(err)
+		}
+
+		if handled.Load() != int64(len(ids)) {
+			t.Errorf("handler called %v times instead of %v", handled.Load(), len(ids))
+		}
+	})
+}
+
 func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		db, mock, _ := sqlmock.New()
@@ -275,7 +326,7 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -290,7 +341,7 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "1", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -344,7 +395,7 @@ func TestProcessor_Run_SkipRetry(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -399,7 +450,7 @@ func TestProcessor_Run_Panic(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -450,7 +501,7 @@ func TestProcessor_Run_NoHandler(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -557,7 +608,7 @@ func TestProcessor_Run_Middleware(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -602,7 +653,7 @@ func TestProcessor_Run_Cancel(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -649,7 +700,7 @@ func TestProcessor_Run_HandlerCanceled(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -701,7 +752,7 @@ func TestProcessor_Run_ShutdownDuringHandler(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
@@ -753,7 +804,7 @@ func TestProcessor_Run_Timeout(t *testing.T) {
 			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "0", "1", time.Now(), time.Now())
 		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
 
-		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id = (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 

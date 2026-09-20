@@ -3,7 +3,6 @@ package nanoq
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -165,40 +164,50 @@ func (c *Client) CreateTask(ctx context.Context, tx *sqlx.Tx, t Task) error {
 	return nil
 }
 
-// ClaimTask claims a task for processing.
+// ClaimTasks claims up to n tasks for processing.
 //
 // Returns ErrNoTasks if no tasks are available.
-func (c *Client) ClaimTask(ctx context.Context) (Task, error) {
-	t := Task{}
+func (c *Client) ClaimTasks(ctx context.Context, n int) ([]Task, error) {
+	var tasks []Task
 	err := c.RunTransaction(ctx, func(tx *sqlx.Tx) error {
 		// Tasks are expected to be canceled and released after the task timeout is reached.
 		// If a task is still claimed after that point, it likely means that the processor has crashed, requiring the task to be reclaimed.
 		// Task are reclaimed after timeout_seconds * 1.1, to allow for extra processing to occur post-cancelation.
-		err := tx.GetContext(ctx, &t, `
+		err := tx.SelectContext(ctx, &tasks, `
 			SELECT
 				id, fingerprint, type, payload, retries, max_retries, timeout_seconds, created_at, scheduled_at, claimed_at
 			FROM tasks
 			WHERE scheduled_at <= UTC_TIMESTAMP(6)
 				AND (claimed_at IS NULL OR DATE_ADD(claimed_at, INTERVAL timeout_seconds*1.1 SECOND) < UTC_TIMESTAMP(6))
-			ORDER BY scheduled_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`)
+			ORDER BY scheduled_at ASC LIMIT ? FOR UPDATE SKIP LOCKED`, n)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNoTasks
-			}
-			return fmt.Errorf("get task: %w", err)
+			return fmt.Errorf("get tasks: %w", err)
 		}
-		now := time.Now().UTC()
-		t.ClaimedAt = &now
+		if len(tasks) == 0 {
+			return ErrNoTasks
+		}
 
-		_, err = tx.NamedExecContext(ctx, `UPDATE tasks SET claimed_at = :claimed_at WHERE id = :id`, t)
+		now := time.Now().UTC()
+		ids := make([]string, len(tasks))
+		for i := range tasks {
+			tasks[i].ClaimedAt = &now
+			ids[i] = tasks[i].ID
+		}
+		query, args, err := sqlx.In(`UPDATE tasks SET claimed_at = ? WHERE id IN (?)`, now, ids)
 		if err != nil {
-			return fmt.Errorf("update task: %w", err)
+			return fmt.Errorf("build update: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return fmt.Errorf("update tasks: %w", err)
 		}
 
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	return t, err
+	return tasks, nil
 }
 
 // DeleteTask deletes the given task.
@@ -359,28 +368,43 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 		})
 	}()
 
+	pollInterval := 1 * time.Second
 	p.logger.Info("Starting processor", slog.Int("concurrency", concurrency))
 	p.workers = make(chan struct{}, concurrency)
 	for !p.done.Load() {
-		// Acquire a worker before claiming a task, to avoid holding claimed tasks while all workers are busy.
+		// Acquire all available workers, then claim a task for each one.
+		// At least one worker is required, so the first acquire blocks.
 		p.workers <- struct{}{}
+		n := cap(p.workers) - len(p.workers) + 1
+		for range n - 1 {
+			p.workers <- struct{}{}
+		}
 
-		t, err := p.client.ClaimTask(processorCtx)
+		tasks, err := p.client.ClaimTasks(processorCtx, n)
+		// Release the workers that went unused.
+		for range n - len(tasks) {
+			<-p.workers
+		}
 		if err != nil {
 			if !errors.Is(err, ErrNoTasks) && !errors.Is(err, context.Canceled) {
-				p.logger.Error("Could not claim task", slog.Any("error", err))
+				p.logger.Error("Could not claim tasks", slog.Any("error", err))
 			}
-			<-p.workers
-			time.Sleep(1 * time.Second)
+			// Wait before looking again, without holding up a shutdown.
+			select {
+			case <-processorCtx.Done():
+			case <-time.After(pollInterval):
+			}
 			continue
 		}
 
-		go func() {
-			if err = p.processTask(processorCtx, t); err != nil {
-				p.logger.Error("Could not process task", slog.Any("error", err))
-			}
-			<-p.workers
-		}()
+		for _, t := range tasks {
+			go func() {
+				if err := p.processTask(processorCtx, t); err != nil {
+					p.logger.Error("Could not process task", slog.Any("error", err))
+				}
+				<-p.workers
+			}()
+		}
 	}
 
 	// Wait for workers to finish.
