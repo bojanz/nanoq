@@ -344,6 +344,7 @@ func (p *Processor) RetryPolicy(rp RetryPolicy) {
 // Once the context is canceled, workers stop claiming new tasks.
 // Tasks that are still being processed are then given until shutdownTimeout
 // to complete, after which they are stopped (via canceled context).
+// Their outcome is then recorded, with a short timeout, before Run returns.
 //
 // Pass a context from signal.NotifyContext to shut down on SIGINT/SIGTERM.
 func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout time.Duration) {
@@ -404,7 +405,9 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 	if err := callHandler(ctx, h, t); err != nil {
 		if ctx.Err() != nil {
 			// The processor is shutting down. Release the task and exit.
-			if err = p.client.ReleaseTask(context.Background(), t); err != nil {
+			outcomeCtx, cancel := taskOutcomeContext(ctx)
+			defer cancel()
+			if err := p.client.ReleaseTask(outcomeCtx, t); err != nil {
 				return fmt.Errorf("release task %v: %w", t.ID, err)
 			}
 			return fmt.Errorf("task %v canceled: %v", t.ID, context.Cause(ctx))
@@ -415,7 +418,9 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 		}
 		if t.Retries < t.MaxRetries && !errors.Is(err, ErrSkipRetry) {
 			retryIn := p.retryPolicy(t)
-			if err := p.client.RetryTask(context.Background(), t, retryIn); err != nil {
+			outcomeCtx, cancel := taskOutcomeContext(ctx)
+			defer cancel()
+			if err := p.client.RetryTask(outcomeCtx, t, retryIn); err != nil {
 				return fmt.Errorf("retry task %v: %w", t.ID, err)
 			}
 
@@ -423,7 +428,9 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 		}
 	}
 
-	if err := p.client.DeleteTask(context.Background(), t); err != nil {
+	outcomeCtx, cancel := taskOutcomeContext(ctx)
+	defer cancel()
+	if err := p.client.DeleteTask(outcomeCtx, t); err != nil {
 		return fmt.Errorf("delete task %v: %w", t.ID, err)
 	}
 
@@ -466,4 +473,11 @@ func callHandler(ctx context.Context, h Handler, t Task) (err error) {
 	}
 
 	return err
+}
+
+// taskOutcomeContext returns a context for releasing, retrying, or deleting a task.
+// It ignores processor cancellation so the outcome is still recorded during
+// shutdown, but times out so a stalled write cannot block shutdown forever.
+func taskOutcomeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
