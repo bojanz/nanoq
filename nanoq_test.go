@@ -422,6 +422,82 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 	})
 }
 
+func TestProcessor_Run_ClaimExpired(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db, mock, _ := sqlmock.New()
+		defer db.Close()
+		client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
+		processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		handlerCalled := 0
+		processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
+			handlerCalled++
+			return nil
+		})
+		var retryDecisions []bool
+		processor.OnError(func(ctx context.Context, task nanoq.Task, err error, willRetry bool) {
+			if !errors.Is(err, nanoq.ErrClaimExpired) {
+				t.Errorf("error handler called with unexpected error: %v", err)
+			}
+			retryDecisions = append(retryDecisions, willRetry)
+		})
+
+		// First claim of an expired task, and retry.
+		mock.ExpectBegin()
+		claimedAt := time.Now().Add(-2 * time.Minute)
+		rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at", "claimed_at"}).
+			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "0", "1", "60", time.Now(), time.Now(), claimedAt)
+		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
+
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		mock.ExpectBegin()
+		mock.ExpectExec("UPDATE tasks SET retries = (.+), scheduled_at = (.+), claimed_at = (.+) WHERE id = (.+)").WithArgs(1, sqlmock.AnyArg(), nil, "01HQJHTZCAT5WDCGVTWJ640VMM").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		// Second claim of the expired task, and deletion (due to exhausted retries).
+		mock.ExpectBegin()
+		rows = sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at", "claimed_at"}).
+			AddRow("01HQJHTZCAT5WDCGVTWJ640VMM", "6cd73f74b18578f5", "my-type", "{}", "1", "1", "60", time.Now(), time.Now(), claimedAt)
+		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
+
+		mock.ExpectExec("UPDATE tasks SET claimed_at = (.+) WHERE id IN (.+)").WithArgs(sqlmock.AnyArg(), "01HQJHTZCAT5WDCGVTWJ640VMM").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		mock.ExpectBegin()
+		mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs("01HQJHTZCAT5WDCGVTWJ640VMM").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			processor.Run(ctx, 1, 1*time.Millisecond)
+			close(done)
+		}()
+		// Wait until the processor has nothing left to do.
+		synctest.Wait()
+		cancel()
+		// Wait for the processor to shut down.
+		<-done
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Error(err)
+		}
+
+		if handlerCalled != 0 {
+			t.Errorf("handler called %v times instead of %v", handlerCalled, 0)
+		}
+
+		if want := []bool{true, false}; !slices.Equal(retryDecisions, want) {
+			t.Errorf("error handler called with willRetry = %v instead of %v", retryDecisions, want)
+		}
+	})
+}
+
 func TestProcessor_Run_SkipRetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		db, mock, _ := sqlmock.New()

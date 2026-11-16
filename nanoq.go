@@ -19,6 +19,10 @@ import (
 )
 
 var (
+	// ErrClaimExpired indicates that a task's previous attempt never recorded its outcome,
+	// usually because the processor crashed. It counts as a failed attempt.
+	ErrClaimExpired = errors.New("claim expired")
+
 	// ErrDuplicateTask indicates that an identical task already exists in the queue.
 	// Tasks are considered identical if they have the same fingerprint.
 	ErrDuplicateTask = errors.New("duplicate task")
@@ -45,6 +49,8 @@ type Task struct {
 	CreatedAt      time.Time  `db:"created_at"`
 	ScheduledAt    time.Time  `db:"scheduled_at"`
 	ClaimedAt      *time.Time `db:"claimed_at"`
+
+	claimExpired bool
 }
 
 // NewTask creates a new task.
@@ -189,6 +195,7 @@ func (c *Client) ClaimTasks(ctx context.Context, n int) ([]Task, error) {
 		now := time.Now().UTC()
 		ids := make([]string, len(tasks))
 		for i := range tasks {
+			tasks[i].claimExpired = tasks[i].ClaimedAt != nil
 			tasks[i].ClaimedAt = &now
 			ids[i] = tasks[i].ID
 		}
@@ -430,7 +437,13 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 		h = p.middleware[i](h)
 	}
 
-	if err := callHandler(ctx, h, t); err != nil {
+	// A task whose claim expired has already used up an attempt (e.g. it crashed the processor),
+	// so it goes through the retry policy instead of running again right away.
+	err := ErrClaimExpired
+	if !t.claimExpired {
+		err = callHandler(ctx, h, t)
+	}
+	if err != nil {
 		if ctx.Err() != nil {
 			// The processor is shutting down. Release the task and exit.
 			outcomeCtx, cancel := taskOutcomeContext(ctx)
