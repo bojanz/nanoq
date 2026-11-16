@@ -11,7 +11,6 @@ import (
 	"math/rand/v2"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -310,7 +309,6 @@ type Processor struct {
 	retryPolicy  RetryPolicy
 
 	workers chan struct{}
-	done    atomic.Bool
 }
 
 // NewProcessor creates a new processor.
@@ -362,7 +360,6 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 		<-ctx.Done()
 
 		p.logger.Info("Shutting down processor", slog.String("timeout", shutdownTimeout.String()))
-		p.done.Store(true)
 		time.AfterFunc(shutdownTimeout, func() {
 			cancel(errors.New("shutdown timeout reached"))
 		})
@@ -371,10 +368,15 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 	pollInterval := 1 * time.Second
 	p.logger.Info("Starting processor", slog.Int("concurrency", concurrency))
 	p.workers = make(chan struct{}, concurrency)
-	for !p.done.Load() {
+	for ctx.Err() == nil {
 		// Acquire all available workers, then claim a task for each one.
 		// At least one worker is required, so the first acquire blocks.
 		p.workers <- struct{}{}
+		if ctx.Err() != nil {
+			// The shutdown started while waiting for a worker.
+			<-p.workers
+			break
+		}
 		n := cap(p.workers) - len(p.workers) + 1
 		for range n - 1 {
 			p.workers <- struct{}{}
@@ -391,7 +393,7 @@ func (p *Processor) Run(ctx context.Context, concurrency int, shutdownTimeout ti
 			}
 			// Wait before looking again, without holding up a shutdown.
 			select {
-			case <-processorCtx.Done():
+			case <-ctx.Done():
 			case <-time.After(pollInterval):
 			}
 			continue

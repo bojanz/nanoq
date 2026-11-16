@@ -263,8 +263,10 @@ func TestProcessor_Run_Batch(t *testing.T) {
 		client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
 		processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		var handled atomic.Int64
+		release := make(chan struct{})
 		processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
 			handled.Add(1)
+			<-release
 
 			return nil
 		})
@@ -275,6 +277,9 @@ func TestProcessor_Run_Batch(t *testing.T) {
 			rows.AddRow(id, fmt.Sprintf("6cd73f74b18578f%d", i), "my-type", "{}", "0", "1", "60", time.Now(), time.Now())
 		}
 
+		// The tasks are processed concurrently, so their deletions can happen in any order.
+		mock.MatchExpectationsInOrder(false)
+
 		// Every worker is free, so the claim asks for one task per worker and
 		// takes them all in a single transaction.
 		mock.ExpectBegin()
@@ -284,24 +289,66 @@ func TestProcessor_Run_Batch(t *testing.T) {
 			WillReturnResult(sqlmock.NewResult(0, int64(len(ids))))
 		mock.ExpectCommit()
 
+		for _, id := range ids {
+			mock.ExpectBegin()
+			mock.ExpectExec("DELETE FROM tasks WHERE id = (.+)").WithArgs(id).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectCommit()
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
-			processor.Run(ctx, len(ids), 1*time.Millisecond)
+			processor.Run(ctx, len(ids), 5*time.Second)
 			close(done)
 		}()
-		// Wait until the processor has nothing left to do.
+		// Wait until every worker is busy, then shut down before any of them
+		// frees up, so that no further claims are made.
 		synctest.Wait()
+		if handled.Load() != int64(len(ids)) {
+			t.Errorf("handler called %v times instead of %v", handled.Load(), len(ids))
+		}
 		cancel()
+		close(release)
 		// Wait for the processor to shut down.
 		<-done
 
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Error(err)
 		}
+	})
+}
 
-		if handled.Load() != int64(len(ids)) {
-			t.Errorf("handler called %v times instead of %v", handled.Load(), len(ids))
+func TestProcessor_Run_ShutdownWhileIdle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db, mock, _ := sqlmock.New()
+		defer db.Close()
+		client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
+		processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+		// An empty claim, after which the processor waits before polling again.
+		mock.ExpectBegin()
+		rows := sqlmock.NewRows([]string{"id", "fingerprint", "type", "payload", "retries", "max_retries", "timeout_seconds", "created_at", "scheduled_at"})
+		mock.ExpectQuery(`SELECT (.+) FROM tasks WHERE(.+)`).WillReturnRows(rows)
+		mock.ExpectRollback()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			processor.Run(ctx, 1, 5*time.Second)
+			close(done)
+		}()
+		// Wait until the processor is idle between polls.
+		synctest.Wait()
+		start := time.Now()
+		cancel()
+		<-done
+
+		if elapsed := time.Since(start); elapsed != 0 {
+			t.Errorf("shutdown took %v, want it to interrupt the idle wait", elapsed)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Error(err)
 		}
 	})
 }
