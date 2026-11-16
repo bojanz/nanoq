@@ -272,7 +272,9 @@ func isConflictError(err error) bool {
 
 type (
 	// ErrorHandler handles a task processing error.
-	ErrorHandler func(ctx context.Context, t Task, err error)
+	//
+	// If willRetry is false, the task is about to be removed from the queue.
+	ErrorHandler func(ctx context.Context, t Task, err error, willRetry bool)
 
 	// Handler processes tasks of a specific type.
 	//
@@ -439,10 +441,11 @@ func (p *Processor) processTask(ctx context.Context, t Task) error {
 			return fmt.Errorf("task %v canceled: %v", t.ID, context.Cause(ctx))
 		}
 
+		retry := t.Retries < t.MaxRetries && !errors.Is(err, ErrSkipRetry)
 		if p.errorHandler != nil {
-			p.errorHandler(ctx, t, err)
+			p.errorHandler(ctx, t, err, retry)
 		}
-		if t.Retries < t.MaxRetries && !errors.Is(err, ErrSkipRetry) {
+		if retry {
 			retryIn := p.retryPolicy(t)
 			outcomeCtx, cancel := taskOutcomeContext(ctx)
 			defer cancel()

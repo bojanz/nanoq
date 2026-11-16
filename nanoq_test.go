@@ -196,7 +196,10 @@ func TestProcessor_Run(t *testing.T) {
 			return nil
 		})
 		errorHandlerCalled := 0
-		processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
+		processor.OnError(func(ctx context.Context, task nanoq.Task, err error, willRetry bool) {
+			if !willRetry {
+				t.Errorf("error handler called with willRetry = false for a task that will be retried")
+			}
 			errorHandlerCalled++
 		})
 
@@ -362,9 +365,9 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 		processor.Handle("my-type", func(ctx context.Context, task nanoq.Task) error {
 			return errors.New("temporary error")
 		})
-		errorHandlerCalled := 0
-		processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
-			errorHandlerCalled++
+		var retryDecisions []bool
+		processor.OnError(func(ctx context.Context, task nanoq.Task, err error, willRetry bool) {
+			retryDecisions = append(retryDecisions, willRetry)
 		})
 
 		// First task claim and retry.
@@ -413,8 +416,8 @@ func TestProcessor_Run_RetriesExhausted(t *testing.T) {
 			t.Error(err)
 		}
 
-		if errorHandlerCalled != 2 {
-			t.Errorf("erorr handler called %v times instead of %v", errorHandlerCalled, 2)
+		if want := []bool{true, false}; !slices.Equal(retryDecisions, want) {
+			t.Errorf("error handler called with willRetry = %v instead of %v", retryDecisions, want)
 		}
 	})
 }
@@ -429,9 +432,12 @@ func TestProcessor_Run_SkipRetry(t *testing.T) {
 			return fmt.Errorf("something terrible happened: %w", nanoq.ErrSkipRetry)
 		})
 		errorHandlerCalled := 0
-		processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
+		processor.OnError(func(ctx context.Context, task nanoq.Task, err error, willRetry bool) {
 			if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "something terrible happened") {
 				t.Errorf("error handler called with unexpected error: %v", err)
+			}
+			if willRetry {
+				t.Errorf("error handler called with willRetry = true for a task that won't be retried")
 			}
 			errorHandlerCalled++
 		})
@@ -484,7 +490,7 @@ func TestProcessor_Run_Panic(t *testing.T) {
 			return nil
 		})
 		errorHandlerCalled := 0
-		processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
+		processor.OnError(func(ctx context.Context, task nanoq.Task, err error, willRetry bool) {
 			if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "nanoq_test.go:") || !strings.Contains(err.Error(), "index out of range") {
 				t.Errorf("error handler called with unexpected error: %v", err)
 			}
@@ -535,7 +541,7 @@ func TestProcessor_Run_NoHandler(t *testing.T) {
 		client := nanoq.NewClient(sqlx.NewDb(db, "sqlmock"))
 		processor := nanoq.NewProcessor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		errorHandlerCalled := 0
-		processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
+		processor.OnError(func(ctx context.Context, task nanoq.Task, err error, willRetry bool) {
 			if !errors.Is(err, nanoq.ErrSkipRetry) || !strings.Contains(err.Error(), "no handler found for task type my-type") {
 				t.Errorf("error handler called with unexpected error: %v", err)
 			}
@@ -737,7 +743,7 @@ func TestProcessor_Run_HandlerCanceled(t *testing.T) {
 			return fmt.Errorf("sub-operation aborted: %w", context.Canceled)
 		})
 		errorHandlerCalled := 0
-		processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
+		processor.OnError(func(ctx context.Context, task nanoq.Task, err error, willRetry bool) {
 			errorHandlerCalled++
 		})
 
@@ -838,7 +844,7 @@ func TestProcessor_Run_Timeout(t *testing.T) {
 			return ctx.Err()
 		})
 		errorHandlerCalled := 0
-		processor.OnError(func(ctx context.Context, task nanoq.Task, err error) {
+		processor.OnError(func(ctx context.Context, task nanoq.Task, err error, willRetry bool) {
 			if !errors.Is(err, nanoq.ErrTaskTimeout) {
 				t.Errorf("error handler called with unexpected error: %v", err)
 			}

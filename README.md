@@ -82,9 +82,9 @@ processor.RetryPolicy(func(t nanoq.Task) time.Duration {
 	}
 	return 1 * time.Hour
 })
-processor.OnError(func(ctx context.Context, t nanoq.Task, err error) {
+processor.OnError(func(ctx context.Context, t nanoq.Task, err error, willRetry bool) {
 	// Log each failed task.
-	// Idea: Send to Sentry when t.Retries == t.MaxRetries.
+	// Idea: Send to Sentry when willRetry is false.
 	logger.Error(err.Error(),
 		slog.String("task_type", t.Type),
 		slog.String("attempt", fmt.Sprintf("%v/%v", t.Retries, t.MaxRetries)),
