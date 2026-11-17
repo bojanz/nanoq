@@ -177,13 +177,13 @@ func (c *Client) ClaimTasks(ctx context.Context, n int) ([]Task, error) {
 	err := c.RunTransaction(ctx, func(tx *sqlx.Tx) error {
 		// Tasks are expected to be canceled and released after the task timeout is reached.
 		// If a task is still claimed after that point, it likely means that the processor has crashed, requiring the task to be reclaimed.
-		// Task are reclaimed after timeout_seconds * 1.1, to allow for extra processing to occur post-cancelation.
+		// Tasks are reclaimed 10 seconds after timing out, leaving time for the canceled attempt to return and record its outcome.
 		err := tx.SelectContext(ctx, &tasks, `
 			SELECT
 				id, fingerprint, type, payload, retries, max_retries, timeout_seconds, created_at, scheduled_at, claimed_at
 			FROM tasks
 			WHERE scheduled_at <= UTC_TIMESTAMP(6)
-				AND (claimed_at IS NULL OR DATE_ADD(claimed_at, INTERVAL timeout_seconds*1.1 SECOND) < UTC_TIMESTAMP(6))
+				AND (claimed_at IS NULL OR DATE_ADD(claimed_at, INTERVAL timeout_seconds + 10 SECOND) < UTC_TIMESTAMP(6))
 			ORDER BY scheduled_at ASC LIMIT ? FOR UPDATE SKIP LOCKED`, n)
 		if err != nil {
 			return fmt.Errorf("get tasks: %w", err)
